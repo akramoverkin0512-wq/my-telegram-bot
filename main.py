@@ -13,7 +13,7 @@ ADMIN_ID = 5670469794
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# --- MYSQL ULANISHI ---
+# --- BAZA BILAN BOG'LANISH FUNKSIYASI ---
 def get_db():
     return mysql.connector.connect(
         host=os.getenv('MYSQLHOST'),
@@ -23,7 +23,26 @@ def get_db():
         port=int(os.getenv('MYSQLPORT', 3306))
     )
 
-# --- ASOSIY MENYU ---
+# Jadvallarni majburiy yaratish
+def check_db():
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                full_name VARCHAR(255),
+                points INT DEFAULT 0,
+                votes INT DEFAULT 0
+            )
+        """)
+        conn.commit()
+        conn.close()
+        print("✅ Baza va jadvallar tayyor!")
+    except Exception as e:
+        print(f"❌ Baza xatosi: {e}")
+
+# --- TUGMALAR (TEXTLARNI TO'G'RI YOZING) ---
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🗳 Ovoz berish"), KeyboardButton(text="👤 Mening profilim")],
@@ -33,10 +52,8 @@ main_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# --- BUYRUQLAR VA TUGMALAR ---
-
 @dp.message(Command("start"))
-async def start_handler(message: types.Message):
+async def start_cmd(message: types.Message):
     try:
         conn = get_db()
         cursor = conn.cursor()
@@ -45,11 +62,12 @@ async def start_handler(message: types.Message):
         conn.commit()
         conn.close()
     except: pass
-    await message.answer(f"👋 Salom {message.from_user.full_name}! Open Budget botingiz tayyor. Kerakli bo'limni tanlang:", reply_markup=main_menu)
+    await message.answer(f"👋 Salom {message.from_user.full_name}!", reply_markup=main_menu)
 
-# PROFIL TUGMASI
+# --- TUGMALARNI ISHLATISH (XATOSIZ) ---
+
 @dp.message(F.text == "👤 Mening profilim")
-async def profile_handler(message: types.Message):
+async def profile_btn(message: types.Message):
     try:
         conn = get_db()
         cursor = conn.cursor()
@@ -57,75 +75,47 @@ async def profile_handler(message: types.Message):
         res = cursor.fetchone()
         conn.close()
         p, v = res if res else (0, 0)
-        await message.answer(f"📋 **Sizning profilingiz:**\n\n👤 Ism: {message.from_user.full_name}\n🌟 Ballar: {p}\n📸 Ovozlar: {v}")
-    except:
-        await message.answer("⚠️ Profil ma'lumotlarini yuklashda xato yuz berdi.")
+        await message.answer(f"📋 **Profilingiz:**\n\n👤 Ism: {message.from_user.full_name}\n🌟 Ballar: {p}\n📸 Ovozlar: {v}")
+    except Exception as e:
+        await message.answer("⚠️ Ma'lumot topilmadi. Avval /start bosing.")
 
-# REYTING TUGMASI
 @dp.message(F.text == "🏆 Reyting")
-async def rating_handler(message: types.Message):
+async def rating_btn(message: types.Message):
     try:
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT full_name, points FROM users ORDER BY points DESC LIMIT 10")
         users = cursor.fetchall()
         conn.close()
-        text = "🏆 **Eng faol foydalanuvchilar:**\n\n"
+        text = "🏆 **TOP 10 foydalanuvchilar:**\n\n"
         for i, (name, p) in enumerate(users, 1):
             text += f"{i}. {name} — {p} ball\n"
         await message.answer(text)
     except:
-        await message.answer("⚠️ Reytingni yuklashda xato yuz berdi.")
+        await message.answer("⚠️ Reyting vaqtinchalik ishlamayapti.")
 
-# YORDAM TUGMASI
 @dp.message(F.text == "🆘 Yordam")
-async def help_handler(message: types.Message):
-    await message.answer("🆘 Savollaringiz bo'lsa, adminga murojaat qiling:\n\n👨‍💻 Admin: @Erkin_Akramov")
+async def help_btn(message: types.Message):
+    await message.answer("🆘 Savollar uchun admin: @Erkin_Akramov")
 
-# OVOZ BERISH TUGMASI
-@dp.message(F.text == "🗳 Ovoz berish")
-async def vote_handler(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="Saytga o'tish 🌐", url="https://openbudget.uz"))
-    await message.answer("🚀 Ovoz bering va tasdiqlovchi skrinshotni shu yerga yuboring!", reply_markup=builder.as_markup())
-
-# TAKLIFNOMA TUGMASI
-@dp.message(F.text == "📢 Taklifnoma")
-async def invite_handler(message: types.Message):
-    bot_info = await bot.get_me()
-    link = f"https://t.me/{bot_info.username}?start={message.from_user.id}"
-    await message.answer(f"🔗 Sizning referal havolangiz:\n{link}\n\nDo'stlarni taklif qiling va ballar to'plang!")
-
-# --- SKRINSHOT QABUL QILISH ---
 @dp.message(F.photo)
 async def photo_handler(message: types.Message):
     await message.answer("📥 Skrinshot qabul qilindi. Admin tasdiqlashini kuting...")
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"accept_{message.from_user.id}"),
-        InlineKeyboardButton(text="❌ Rad etish", callback_data=f"reject_{message.from_user.id}")
+        InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"ok_{message.from_user.id}"),
+        InlineKeyboardButton(text="❌ Rad etish", callback_data=f"no_{message.from_user.id}")
     )
     await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, 
-                         caption=f"👤 Foydalanuvchi: {message.from_user.full_name}\nID: {message.from_user.id}",
+                         caption=f"Foydalanuvchi: {message.from_user.full_name}\nID: {message.from_user.id}",
                          reply_markup=builder.as_markup())
 
-# --- ADMIN QARORI ---
-@dp.callback_query(F.data.startswith("accept_"))
-async def admin_accept(call: types.CallbackQuery):
+# --- ADMIN QARORLARI ---
+
+@dp.callback_query(F.data.startswith("ok_"))
+async def admin_ok(call: types.CallbackQuery):
     uid = int(call.data.split("_")[1])
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET points = points + 1, votes = votes + 1 WHERE user_id = %s", (uid,))
-        conn.commit()
-        conn.close()
-        await bot.send_message(uid, "🎉 Skrinshotingiz tasdiqlandi! Ball qo'shildi.")
-        await call.message.edit_caption(caption=call.message.caption + "\n\n🟢 TASDIQLANDI")
-    except:
-        await call.answer("Bazaga ulanishda xato!")
-
-async def main():
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        cursor.execute("UPDATE
