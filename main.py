@@ -7,27 +7,38 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardBut
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # --- SIZNING DOIMIY MA'LUMOTLARINGIZ ---
-API_TOKEN = "8214317131:AAHuU1PeLF4pgfmzeS3wV1RRoL5NaKWBWBg" 
-ADMIN_ID = 5670469794 
-
-# --- MYSQL ULANISHI (RAILWAY O'ZGARUVCHILARI ORQALI) ---
-def get_db_connection():
-    try:
-        return mysql.connector.connect(
-            host=os.getenv('MYSQLHOST'),
-            user=os.getenv('MYSQLUSER'),
-            password=os.getenv('MYSQL_ROOT_PASSWORD'),
-            database=os.getenv('MYSQLDATABASE'),
-            port=os.getenv('MYSQLPORT')
-        )
-    except Exception as e:
-        print(f"Baza bilan ulanishda xato: {e}")
-        return None
+API_TOKEN = "8214317131:AAHuU1PeLF4pgfmzeS3wV1RRoL5NaKWBWBg"
+ADMIN_ID = 5670469794
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# --- ASOSIY MENYU (REPLY KEYBOARD) ---
+# --- MYSQL ULANISHI VA JADVALLARNI YARATISH ---
+def get_db():
+    conn = mysql.connector.connect(
+        host=os.getenv('MYSQLHOST'),
+        user=os.getenv('MYSQLUSER'),
+        password=os.getenv('MYSQLPASSWORD'),
+        database=os.getenv('MYSQLDATABASE'),
+        port=os.getenv('MYSQLPORT')
+    )
+    return conn
+
+# Ma'lumotlar bazasini tayyorlash
+conn = get_db()
+cursor = conn.cursor()
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id BIGINT PRIMARY KEY,
+        full_name VARCHAR(255),
+        points INT DEFAULT 0,
+        votes INT DEFAULT 0
+    )
+""")
+conn.commit()
+conn.close()
+
+# --- KLAVIATURA ---
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🗳 Ovoz berish"), KeyboardButton(text="👤 Mening profilim")],
@@ -37,43 +48,73 @@ main_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# --- START BUYRUG'I ---
+# --- START ---
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
-    await message.answer(
-        f"👋 Assalomu alaykum, {message.from_user.full_name}!\n"
-        "O'z mahallangiz obodonchiligi uchun ovoz yig'ish botiga xush kelibsiz! 🚀\n"
-        "Ovoz bering, skrinshot yuboring va sovg'alar yutib oling!",
-        reply_markup=main_menu
-    )
-
-# --- YORDAM TUGMASI (@Erkin_Akramov) ---
-@dp.message(F.text == "🆘 Yordam")
-async def help_handler(message: types.Message):
-    await message.answer(
-        "❓ Savollaringiz bormi? Admin bilan bog'laning:\n\n"
-        "👨‍💻 Admin: @Erkin_Akramov",
-        reply_markup=main_menu
-    )
-
-# --- OVOZ BERISH YO'RIQNOMASI ---
-@dp.message(F.text == "🗳 Ovoz berish")
-async def vote_info(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="Loyiha sahifasi 🌐", url="https://openbudget.uz"))
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT IGNORE INTO users (user_id, full_name) VALUES (%s, %s)", 
+                   (message.from_user.id, message.from_user.full_name))
+    conn.commit()
+    conn.close()
     
     await message.answer(
-        "🚀 **Ovoz berish bo'yicha yo'riqnoma:**\n\n"
-        "1️⃣ Pastdagi tugma orqali saytga o'ting.\n"
-        "2️⃣ Ovoz berib, muvaffaqiyatli xabarni skrinshot qiling.\n"
-        "3️⃣ Skrinshotni shu botga yuboring! ✅",
+        f"👋 Assalomu alaykum, {message.from_user.full_name}!\n"
+        "Ovoz yig'ish botiga xush kelibsiz! 🚀",
+        reply_markup=main_menu
+    )
+
+# --- PROFIL ---
+@dp.message(F.text == "👤 Mening profilim")
+async def profile_handler(message: types.Message):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT points, votes FROM users WHERE user_id = %s", (message.from_user.id,))
+    data = cursor.fetchone()
+    conn.close()
+    
+    await message.answer(
+        f"📋 **Sizning profilingiz:**\n\n"
+        f"👤 Ism: {message.from_user.full_name}\n"
+        f"🆔 ID: {message.from_user.id}\n"
+        f"🌟 Jami ballar: {data[0]}\n"
+        f"📸 Tasdiqlangan ovozlar: {data[1]}"
+    )
+
+# --- YORDAM ---
+@dp.message(F.text == "🆘 Yordam")
+async def help_handler(message: types.Message):
+    await message.answer("🆘 Muammo bo'yicha adminga yozing: @Erkin_Akramov")
+
+# --- OVOZ BERISH ---
+@dp.message(F.text == "🗳 Ovoz berish")
+async def vote_handler(message: types.Message):
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="Loyiha sahifasi 🌐", url="https://openbudget.uz"))
+    await message.answer(
+        "🚀 **Ovoz bering va skrinshot yuboring!**\n\n"
+        "SMS kodni kiritib ovoz berganingizdan so'ng, tasdiqlovchi rasmni botga tashlang.",
         reply_markup=builder.as_markup()
     )
 
-# --- SKRINSHOTNI ADMINGA YUBORISH ---
+# --- REYTING ---
+@dp.message(F.text == "🏆 Reyting")
+async def rating_handler(message: types.Message):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT full_name, points FROM users ORDER BY points DESC LIMIT 10")
+    top_users = cursor.fetchall()
+    conn.close()
+    
+    text = "🏆 **Eng faol foydalanuvchilar:**\n\n"
+    for i, user in enumerate(top_users, 1):
+        text += f"{i}. {user[0]} — {user[1]} ball\n"
+    await message.answer(text)
+
+# --- SKRINSHOT VA ADMIN TASDIQLASHI ---
 @dp.message(F.photo)
 async def photo_handler(message: types.Message):
-    await message.answer("📥 **Skrinshot qabul qilindi!**\nAdmin tasdiqlashini kuting...")
+    await message.answer("📥 **Skrinshot qabul qilindi!** Admin tasdiqlashini kuting...")
     
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -84,24 +125,33 @@ async def photo_handler(message: types.Message):
     await bot.send_photo(
         chat_id=ADMIN_ID,
         photo=message.photo[-1].file_id,
-        caption=(
-            f"👤 **Yangi skrinshot!**\n"
-            f"Ism: {message.from_user.full_name}\n"
-            f"ID: {message.from_user.id}\n\n"
-            f"Tasdiqlaysizmi?"
-        ),
+        caption=f"👤 **Yangi skrinshot!**\nID: {message.from_user.id}\nIsm: {message.from_user.full_name}",
         reply_markup=builder.as_markup()
     )
 
-# --- ADMIN QARORI ---
 @dp.callback_query(F.data.startswith("accept_"))
 async def admin_accept(callback: types.CallbackQuery):
     user_id = int(callback.data.split("_")[1])
-    await bot.send_message(user_id, "🎉 **Tabriklaymiz!**\nOvozingiz tasdiqlandi va ball berildi!")
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET points = points + 1, votes = votes + 1 WHERE user_id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+    
+    await bot.send_message(user_id, "🎉 **Tabriklaymiz!** Skrinshotingiz tasdiqlandi!")
     await callback.message.edit_caption(caption=callback.message.caption + "\n\n🟢 **TASDIQLANDI**")
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("reject_"))
 async def admin_reject(callback: types.CallbackQuery):
     user_id = int(callback.data.split("_")[1])
-    await bot.send_message(user_id, "⚠️ **Rad etildi!**\nSk
+    await bot.send_message(user_id, "⚠️ **Rad etildi!** Qayta yuboring.")
+    await callback.message.edit_caption(caption=callback.message.caption + "\n\n🔴 **RAD ETILDI**")
+    await callback.answer()
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
